@@ -24,8 +24,10 @@ use std::collections::{BTreeMap as Map, BTreeSet as Set};
 use std::fmt::Display;
 use std::io::prelude::*;
 use std::ops::Range;
+#[cfg(not(windows))]
 use std::os::unix::fs::PermissionsExt;
 use std::{fs, fmt, process, io, iter, cmp};
+use std::path::Path;
 
 macro_rules! warn {
   ($($arg:tt)*) => {{
@@ -277,6 +279,28 @@ fn run_backtick<'a>(
   }
 }
 
+#[cfg(not(windows))]
+impl<'a> Recipe<'a> {
+  fn adjust_perms<P: AsRef<Path>>(&self, p: P) -> Result<(), RunError<'a>> {
+    let mut perms = fs::metadata(p)
+        .map_err(|error| RunError::TmpdirIoError{recipe: self.name, io_error: error})?
+        .permissions();
+
+    // make the script executable
+    let current_mode = perms.mode();
+    perms.set_mode(current_mode | 0o100);
+    fs::set_permissions(p, perms)
+      .map_err(|error| RunError::TmpdirIoError{recipe: self.name, io_error: error})?;
+  }
+}
+
+#[cfg(windows)]
+impl<'a> Recipe<'a> {
+  fn adjust_perms<P: AsRef<Path>>(&self, p: P) -> Result<(), RunError<'a>> {
+    Ok(())
+  }
+}
+
 impl<'a> Recipe<'a> {
   fn argument_range(&self) -> Range<usize> {
     self.parameters.iter().filter(|p| !p.default.is_some()).count()
@@ -373,6 +397,7 @@ impl<'a> Recipe<'a> {
          .map_err(|error| RunError::TmpdirIoError{recipe: self.name, io_error: error})?;
       }
 
+      /*
       // get current permissions
       let mut perms = fs::metadata(&path)
         .map_err(|error| RunError::TmpdirIoError{recipe: self.name, io_error: error})?
@@ -383,6 +408,8 @@ impl<'a> Recipe<'a> {
       perms.set_mode(current_mode | 0o100);
       fs::set_permissions(&path, perms)
         .map_err(|error| RunError::TmpdirIoError{recipe: self.name, io_error: error})?;
+      */
+      self.adjust_perms(&path)?;
 
       // run it!
       let mut command = process::Command::new(path);
